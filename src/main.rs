@@ -96,6 +96,33 @@ fn main() {
     match mode.as_str() {
         "server" => {
             let bind = flag(&args, "--bind").unwrap_or_else(|| "0.0.0.0:5201".into());
+            // AF_XDP RX sink (kernel-bypass). Needs --iface + a build with `xdp`.
+            if has(&args, "--xdp") {
+                #[cfg(feature = "xdp")]
+                {
+                    let iface = match flag(&args, "--iface") {
+                        Some(i) => i,
+                        None => { eprintln!("error: --xdp sink needs --iface <nic>"); usage(); }
+                    };
+                    let duration: u64 = flag(&args, "--duration").and_then(|s| s.parse().ok()).unwrap_or(3600);
+                    use std::sync::atomic::{AtomicU64, Ordering};
+                    let bytes = std::sync::Arc::new(AtomicU64::new(0));
+                    let pkts = std::sync::Arc::new(AtomicU64::new(0));
+                    let drops = std::sync::Arc::new(AtomicU64::new(0));
+                    let t0 = std::time::Instant::now();
+                    if let Err(e) = xdp::xdp_udp_sink(&iface, duration, &cpus, bytes.clone(), pkts.clone(), drops.clone()) {
+                        eprintln!("xdp sink error: {e}"); std::process::exit(1);
+                    }
+                    let secs = t0.elapsed().as_secs_f64();
+                    let (p, d) = (pkts.load(Ordering::Relaxed), drops.load(Ordering::Relaxed));
+                    let mpps = p as f64 / secs / 1e6;
+                    let loss = if p + d == 0 { 0.0 } else { d as f64 * 100.0 / (p + d) as f64 };
+                    println!("AF_XDP sink: {p} frames | {mpps:.4} Mpps | loss {loss:.3}%");
+                    return;
+                }
+                #[cfg(not(feature = "xdp"))]
+                { eprintln!("error: --xdp sink requires a build with --features xdp"); std::process::exit(1); }
+            }
             if udp {
                 oom_guard(net::BATCH as u64 * (len.max(2048)) as u64);
             }

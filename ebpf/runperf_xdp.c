@@ -55,9 +55,7 @@ int dns_xdp_client(struct xdp_md *ctx)
     if ((void *)(udp + 1) > data_end)
         return XDP_PASS;
 
-    /* DNS response: source port = 53 */
-    if (udp->source != __builtin_bswap16(53))
-        return XDP_PASS;
+    /* RunPerf: redirect all UDP to the XSK */
 
     return bpf_redirect_map(&XSKS, ctx->rx_queue_index, XDP_PASS);
 }

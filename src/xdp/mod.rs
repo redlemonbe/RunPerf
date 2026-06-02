@@ -14,3 +14,8 @@ pub mod loader;
 
 mod gen;
 pub use gen::xdp_udp_blast;
+
+#[cfg(feature = "xdp")]
+mod sink;
+#[cfg(feature = "xdp")]
+pub use sink::xdp_udp_sink;
