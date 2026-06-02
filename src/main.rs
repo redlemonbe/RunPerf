@@ -11,6 +11,7 @@
 mod affinity;
 mod simd;
 mod net;
+mod xdp;
 
 use affinity::resolve_cpus;
 
@@ -121,6 +122,38 @@ fn main() {
             let threads: usize = flag(&args, "--threads").and_then(|s| s.parse().ok()).unwrap_or(cpus.len());
             let target_pps: u64 = flag(&args, "--target-pps").and_then(|s| s.parse().ok()).unwrap_or(0);
             let json = has(&args, "--json");
+
+            // AF_XDP generator (kernel-bypass TX). Needs --iface; --connect = IPv4 dst.
+            if has(&args, "--xdp") {
+                let iface = match flag(&args, "--iface") {
+                    Some(i) => i,
+                    None => { eprintln!("error: --xdp needs --iface <nic>"); usage(); }
+                };
+                let dst: std::net::SocketAddrV4 = match connect.parse() {
+                    Ok(d) => d,
+                    Err(_) => { eprintln!("error: --xdp --connect needs IPv4 HOST:PORT"); std::process::exit(1); }
+                };
+                use std::sync::atomic::{AtomicU64, Ordering};
+                let bytes = std::sync::Arc::new(AtomicU64::new(0));
+                let pkts = std::sync::Arc::new(AtomicU64::new(0));
+                let t0 = std::time::Instant::now();
+                if let Err(e) = xdp::xdp_udp_blast(&iface, dst, len, duration, target_pps, &cpus, bytes.clone(), pkts.clone()) {
+                    eprintln!("xdp error: {e}");
+                    std::process::exit(1);
+                }
+                let secs = t0.elapsed().as_secs_f64();
+                let (b, p) = (bytes.load(Ordering::Relaxed), pkts.load(Ordering::Relaxed));
+                let gbps = b as f64 * 8.0 / secs / 1e9;
+                let mpps = p as f64 / secs / 1e6;
+                if json {
+                    println!("{{\"proto\":\"xdp-udp\",\"seconds\":{secs:.3},\"bytes\":{b},\"packets\":{p},\"gbps\":{gbps:.4},\"mpps\":{mpps:.4}}}");
+                } else {
+                    println!("──────────────────────────────────────────");
+                    println!("AF_XDP  {secs:.3} s  |  {gbps:.3} Gb/s  |  {mpps:.4} Mpps  |  {p} frames");
+                    println!("──────────────────────────────────────────");
+                }
+                return;
+            }
 
             if !cpus.is_empty() {
                 eprintln!("pinning {} thread(s) to CPUs {:?}", threads, cpus);

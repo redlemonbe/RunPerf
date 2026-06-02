@@ -10,8 +10,18 @@ repository = "https://github.com/redlemonbe/RunPerf"
 name = "runperf"
 path = "src/main.rs"
 
+[features]
+# AF_XDP datapath (kernel-bypass generator). Pulls aya + needs clang/libbpf at
+# build to compile the eBPF redirect program. Off by default keeps the
+# socket-only build single-static-binary + libc-only.
+xdp = ["dep:aya", "dep:aya-ebpf-bindings"]
+
 [dependencies]
 libc = "0.2"
+aya = { version = "0.13", optional = true }
+aya-ebpf-bindings = { version = "0.1", optional = true }
+
+[build-dependencies]
 
 [profile.release]
 opt-level = 3
