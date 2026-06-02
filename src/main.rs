@@ -9,6 +9,7 @@
 //! NUMA node — this is the difference from a single-threaded iperf3 UDP run.
 
 mod affinity;
+mod simd;
 mod net;
 
 use affinity::resolve_cpus;
@@ -76,6 +77,7 @@ fn main() {
     if args.is_empty() {
         usage();
     }
+    simd::log_simd_info();
     let mode = args[0].clone();
     let udp = has(&args, "--udp");
     let len: usize = flag(&args, "--len").and_then(|s| s.parse().ok()).unwrap_or(1400);
