@@ -26,25 +26,37 @@ SSE2/AVX2 hot path, and an optional **AF_XDP kernel-bypass** datapath.
 - **Anti-OOM guard**, human + **JSON** output. Single static binary (libc-only
   unless `xdp` is enabled).
 
-## Performance & scaling — *speed is a function of allocated cores*
+## Performance & scaling — *match the model to the metric*
 
-This is the whole point. A generic, "works-everywhere" emulated NIC layer
-(e.g. an emulated `vmxnet3` on a hypervisor) caps small-packet rate low because
-every packet costs a VM exit — typically a few-hundred-k pps ceiling. RunPerf
-doesn't fight that with a faster single thread; it **scales out across cores and
-queues**, so throughput rises with the resources you allocate.
+The two metrics scale differently, and RunPerf defaults to the right model for
+each:
+
+- **TCP throughput → a single flow.** One TCP stream already saturates a 10 GbE
+  path: the kernel + NIC do the transport, not userspace, so a single core is
+  never the bottleneck at 10 G. Stacking N concurrent flows only adds cubic
+  contention and synchronised-startup loss — *N flows sum to less than one clean
+  flow* on a single bottleneck. So `runperf client` defaults to **one TCP flow**
+  and hits **line rate, identical to `iperf3`**. (Use `--threads N` for TCP only
+  on links a single core can't fill — 25/40/100 GbE — where the flows are then
+  started staggered to avoid global synchronisation.)
+- **UDP packet-rate → one pinned worker per CPU.** Here the bottleneck *is*
+  per-core packet processing, so throughput scales with cores/queues. A generic
+  emulated NIC caps small-packet rate low (every packet is a VM exit); RunPerf
+  scales out across cores and queues instead of fighting it with a faster single
+  thread.
 
 Measured VM-to-VM, two hypervisor hosts, 10 GbE direct link, RunPerf v0.2:
 
-| Setup | UDP generation | TCP |
+| Setup | UDP generation (Mpps) | TCP, 1 flow (Gb/s) |
 |---|---|---|
-| emulated NIC, **2 queues / 2 vCPU** | ~0.05 Mpps | ~5.9 Gb/s |
-| paravirt + vhost, **8 queues / 8 vCPU** | **3.57 Mpps** | **8.48 Gb/s** |
+| emulated NIC, **2 queues / 2 vCPU** | ~0.05 | — |
+| paravirt + vhost, **8 queues / 8 vCPU** | **3.57** | **9.88** (= `iperf3` 9.88) |
 
-Same code — the difference is the cores/queues handed to it (≈ **70×** the packet
-rate). RunPerf auto-detects and pins one worker per core/queue: **give it more
-CPUs, it goes faster.** (On real hardware, the `--xdp` path pushes the rate
-further by bypassing the kernel stack entirely.)
+UDP: same code, ≈ **70×** the packet rate from cores/queues alone — **give it
+more CPUs, it goes faster.** TCP: a single flow reaches the physical port ceiling
+(10 GbE − framing ≈ 9.88 Gb/s), matching `iperf3` exactly; two independent tools
+hitting the same number *is* the proof it's the link, not the tool. (On real
+hardware, the `--xdp` path pushes the UDP rate further by bypassing the stack.)
 
 ## Install
 

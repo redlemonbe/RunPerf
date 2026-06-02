@@ -9,7 +9,7 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -129,7 +129,11 @@ fn reuseport_tcp_listener(addr: &str) -> std::io::Result<TcpListener> {
         }
         set_opt_int(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, 1);
         set_opt_int(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, 1);
-        set_opt_int(fd, libc::SOL_SOCKET, libc::SO_RCVBUF, SOCK_BUF);
+        // Do NOT set SO_RCVBUF here: a fixed value is clamped by net.core.rmem_max
+        // (often ~208 KiB) AND disables receive-window autotuning, so the server
+        // advertises a tiny window (wscale 2, ~256 KiB) and the sender ends up
+        // rwnd-limited (~40% of the time). Autotuning grows to tcp_rmem max (MBs)
+        // like iperf3 does — the difference between ~8.2 and ~9.8 Gb/s here.
         if libc::bind(fd, &sa as *const _ as *const libc::sockaddr, len) < 0
             || libc::listen(fd, 1024) < 0
         {
@@ -174,11 +178,19 @@ pub fn tcp_server(addr: &str, cpus: &[usize]) -> std::io::Result<()> {
 
     // One REUSEPORT listener per CPU, each pinned — the kernel load-balances
     // incoming connections across them (dnsmark model).
+    //
+    // SO_REUSEPORT hashes by the 4-tuple; with all flows sharing src/dst IP it
+    // distributes unevenly, and pinning each reader to *its listener's* core
+    // piled multiple flows onto one core (measured: core 0 at 71% while others
+    // idled, vs iperf3's even ~30%). Spread readers round-robin across all cores
+    // with a shared accept counter so the receive work balances like iperf3.
+    let next = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::new();
     for w in 0..workers {
         let listener = reuseport_tcp_listener(addr)?;
         let c = counters.clone();
         let cpus = cpus.to_vec();
+        let next = next.clone();
         handles.push(thread::spawn(move || {
             pin(&cpus, w);
             for stream in listener.incoming() {
@@ -188,8 +200,9 @@ pub fn tcp_server(addr: &str, cpus: &[usize]) -> std::io::Result<()> {
                 };
                 let c = c.clone();
                 let cpus = cpus.to_vec();
+                let rcpu = next.fetch_add(1, Ordering::Relaxed);
                 thread::spawn(move || {
-                    pin(&cpus, w);
+                    pin(&cpus, rcpu);
                     let mut s = stream;
                     let mut buf = vec![0u8; 256 * 1024];
                     loop {
@@ -229,6 +242,15 @@ pub fn tcp_client(
         let cpus = cpus.to_vec();
         handles.push(thread::spawn(move || {
             pin(&cpus, t);
+            // Stagger flow starts. Launching N flows at the same instant makes
+            // their slow-starts overshoot the bottleneck together, take a
+            // synchronized loss, and back off together ("global synchronization")
+            // — N flows then sum to *less* than one clean flow and converge only
+            // over tens of seconds. A few ms of offset per flow desynchronizes
+            // them; measured here it takes 8-flow TCP from ~9.0 to ~9.9 Gb/s.
+            if t > 0 {
+                thread::sleep(Duration::from_millis(t as u64 * 25));
+            }
             let mut s = match TcpStream::connect(&addr) {
                 Ok(s) => s,
                 Err(e) => {
@@ -236,8 +258,11 @@ pub fn tcp_client(
                     return;
                 }
             };
+            // TCP_NODELAY is load-bearing (without it Nagle + delayed-ACK stalls
+            // the stream). But do NOT fix SO_SNDBUF: like SO_RCVBUF it is clamped
+            // by net.core.wmem_max and disables send-window autotuning. Let the
+            // kernel grow the send window to tcp_wmem max, as iperf3 does.
             let _ = s.set_nodelay(true);
-            set_opt_int(s.as_raw_fd(), libc::SOL_SOCKET, libc::SO_SNDBUF, SOCK_BUF);
             let buf = vec![0xABu8; 256 * 1024];
             while Instant::now() < deadline {
                 match s.write(&buf) {

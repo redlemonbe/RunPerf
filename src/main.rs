@@ -145,8 +145,19 @@ fn main() {
                 }
             };
             let duration: u64 = flag(&args, "--duration").and_then(|s| s.parse().ok()).unwrap_or(10);
-            // Default: one client worker per detected CPU.
-            let threads: usize = flag(&args, "--threads").and_then(|s| s.parse().ok()).unwrap_or(cpus.len());
+            // Default flow count differs by protocol, on purpose:
+            //   UDP packet-rate  → one worker per CPU (the bottleneck is per-core
+            //                      packet processing; throughput scales with cores).
+            //   TCP throughput   → a SINGLE flow. One TCP stream already saturates
+            //                      a 10 GbE path (the kernel/NIC do the transport,
+            //                      not userspace), and stacking N concurrent cubic
+            //                      flows only adds contention/global-synchronisation
+            //                      loss — N flows sum to *less* than one clean flow.
+            // Override either with --threads N (use >1 for TCP only on links a
+            // single core can't fill, e.g. 25/40/100 GbE).
+            let threads: usize = flag(&args, "--threads")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(if udp { cpus.len() } else { 1 });
             let target_pps: u64 = flag(&args, "--target-pps").and_then(|s| s.parse().ok()).unwrap_or(0);
             let json = has(&args, "--json");
 
