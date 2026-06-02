@@ -134,16 +134,11 @@ pub fn iface_for_server(server: std::net::IpAddr) -> Option<String> {
             getifaddrs_iface_for_subnet(v4)
                 .or_else(|| {
                     let iface = iface_for_ipv4(v4)?;
-                    tracing::debug!(
-                        iface = %iface,
-                        "XDP: interface selected via routing table"
-                    );
                     Some(iface)
                 })
         }
         std::net::IpAddr::V6(_) => {
             let iface = default_interface()?;
-            tracing::debug!(iface = %iface, "XDP: interface selected via routing table");
             Some(iface)
         }
     }
@@ -184,10 +179,6 @@ fn getifaddrs_iface_for_subnet(server: std::net::Ipv4Addr) -> Option<String> {
         if name == "lo" { continue; }
 
         if (iface_u32 & mask_u32) == (server_u32 & mask_u32) {
-            tracing::debug!(
-                iface = %name, server = %server,
-                "XDP: interface selected via getifaddrs() for subnet of server IP"
-            );
             result = Some(name.to_owned());
             break;
         }
@@ -230,7 +221,6 @@ pub fn default_interface() -> Option<String> {
         let iface = cols.next()?.to_string();
         let dest  = cols.next()?;
         if dest == "00000000" {
-            tracing::debug!(iface = %iface, "XDP: interface selected via routing table");
             return Some(iface);
         }
     }

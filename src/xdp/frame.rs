@@ -163,8 +163,8 @@ mod tests {
         let hdr = FrameHeader::new(
             [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
             [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            "192.168.1.1".parse().unwrap(),
-            "192.168.1.2".parse().unwrap(),
+            "198.51.100.1".parse().unwrap(),
+            "198.51.100.2".parse().unwrap(),
             12345, 53,
         );
         let dns = b"hello dns payload";
