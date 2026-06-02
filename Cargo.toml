@@ -1,0 +1,21 @@
+[package]
+name = "runperf"
+version = "0.1.0"
+edition = "2021"
+description = "High-rate network throughput & packet-rate benchmark (TCP/UDP) — multi-thread, CPU-pinned, NUMA-aware"
+license = "AGPL-3.0"
+repository = "https://github.com/redlemonbe/RunPerf"
+
+[[bin]]
+name = "runperf"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
