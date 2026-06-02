@@ -1,6 +1,6 @@
 [package]
 name = "runperf"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "High-rate network throughput & packet-rate benchmark (TCP/UDP) — multi-thread, CPU-pinned, NUMA-aware"
 license = "AGPL-3.0"

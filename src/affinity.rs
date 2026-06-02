@@ -5,6 +5,32 @@
 
 use std::fs;
 
+/// CPUs this process is allowed to run on (sched_getaffinity). One worker per
+/// entry = the dnsmark model: a pinned worker per detected core.
+pub fn online_cpus() -> Vec<usize> {
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_ZERO(&mut set);
+        let mut v = Vec::new();
+        if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) == 0 {
+            for c in 0..(libc::CPU_SETSIZE as usize) {
+                if libc::CPU_ISSET(c, &set) {
+                    v.push(c);
+                }
+            }
+        }
+        if v.is_empty() {
+            v.push(0);
+        }
+        v
+    }
+}
+
+/// Number of CPUs available to this process (>= 1).
+pub fn online_cpu_count() -> usize {
+    online_cpus().len().max(1)
+}
+
 /// Pin the calling thread to `cpu`. Best-effort; logs nothing on failure.
 pub fn pin_to_cpu(cpu: usize) -> bool {
     unsafe {

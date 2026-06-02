@@ -79,7 +79,16 @@ fn main() {
     let mode = args[0].clone();
     let udp = has(&args, "--udp");
     let len: usize = flag(&args, "--len").and_then(|s| s.parse().ok()).unwrap_or(1400);
-    let cpus = resolve_cpus(&flag(&args, "--cpus"), &flag(&args, "--numa").and_then(|s| s.parse().ok()));
+    // dnsmark DNA: if no --cpus/--numa given, default to ALL online CPUs — one
+    // pinned worker per detected core.
+    let cpus = {
+        let explicit = resolve_cpus(&flag(&args, "--cpus"), &flag(&args, "--numa").and_then(|s| s.parse().ok()));
+        if explicit.is_empty() {
+            affinity::online_cpus()
+        } else {
+            explicit
+        }
+    };
 
     match mode.as_str() {
         "server" => {
@@ -106,7 +115,8 @@ fn main() {
                 }
             };
             let duration: u64 = flag(&args, "--duration").and_then(|s| s.parse().ok()).unwrap_or(10);
-            let threads: usize = flag(&args, "--threads").and_then(|s| s.parse().ok()).unwrap_or(1);
+            // Default: one client worker per detected CPU.
+            let threads: usize = flag(&args, "--threads").and_then(|s| s.parse().ok()).unwrap_or(cpus.len());
             let target_pps: u64 = flag(&args, "--target-pps").and_then(|s| s.parse().ok()).unwrap_or(0);
             let json = has(&args, "--json");
 
