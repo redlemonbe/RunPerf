@@ -43,6 +43,34 @@ fn has(args: &[String], name: &str) -> bool {
     args.iter().any(|a| a == name)
 }
 
+/// Available memory in bytes (MemAvailable from /proc/meminfo), if readable.
+fn mem_available_bytes() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/meminfo").ok()?;
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("MemAvailable:") {
+            let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb * 1024);
+        }
+    }
+    None
+}
+
+/// Anti-OOM safeguard: refuse to allocate packet buffers larger than 25% of
+/// available RAM (or 1 GiB if MemAvailable is unreadable). Stops absurd
+/// --threads / --len combinations from OOM-ing the host.
+fn oom_guard(planned_bytes: u64) {
+    let cap = mem_available_bytes().map(|m| m / 4).unwrap_or(1 << 30);
+    if planned_bytes > cap {
+        eprintln!(
+            "error: refusing to allocate {} MiB of buffers (anti-OOM limit {} MiB) — \
+             reduce --threads or --len.",
+            planned_bytes / (1 << 20),
+            cap / (1 << 20)
+        );
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
@@ -56,6 +84,9 @@ fn main() {
     match mode.as_str() {
         "server" => {
             let bind = flag(&args, "--bind").unwrap_or_else(|| "0.0.0.0:5201".into());
+            if udp {
+                oom_guard(net::BATCH as u64 * (len.max(2048)) as u64);
+            }
             let r = if udp {
                 net::udp_server(&bind, len, &cpus)
             } else {
@@ -82,6 +113,12 @@ fn main() {
             if !cpus.is_empty() {
                 eprintln!("pinning {} thread(s) to CPUs {:?}", threads, cpus);
             }
+            let planned = if udp {
+                threads as u64 * net::BATCH as u64 * len as u64
+            } else {
+                threads as u64 * 256 * 1024
+            };
+            oom_guard(planned);
             let summary = if udp {
                 net::udp_client(&connect, threads, duration, len, target_pps, &cpus)
             } else {

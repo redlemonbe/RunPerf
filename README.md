@@ -1,91 +1,105 @@
 # RunPerf
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/redlemonbe/RunPerf)](https://github.com/redlemonbe/RunPerf/releases/latest)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/redlemonbe?style=flat&logo=github&label=Sponsor)](https://github.com/sponsors/redlemonbe)
 
-![Version](https://img.shields.io/badge/version-v0.1.0-blue)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-![Arch](https://img.shields.io/badge/arch-x86__64%20%7C%20aarch64-lightgrey)
+> Read [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md) before use. At full throttle RunPerf
+> generates millions of packets per second — only point it at networks you own or
+> are authorized to test.
 
-**A network throughput & packet-rate benchmark — like `iperf3`, but built for the
-packet rates `iperf3` can't reach.**
+A network throughput and packet-rate benchmark — like `iperf3`, but built for the
+packet rates `iperf3` can't reach.
 
-RunPerf measures TCP throughput and **UDP packet rate (Mpps)** with a multi-threaded,
-CPU-pinned, NUMA-aware engine. The UDP path uses `sendmmsg`/`recvmmsg` batching so a
-real NIC — not the tool — is the bottleneck. Built in Rust, single static binary, no
-runtime dependencies (musl targets).
+## What you get
 
-> Why not just `iperf3`? `iperf3` is single-threaded for UDP and is not a packet
-> generator — it tops out well below line rate on small frames. RunPerf pins N
-> threads to N cores and batches sends, which is what you need to push toward the
-> 14.88 Mpps small-frame ceiling of a 10 GbE link.
+- **TCP throughput** (Gb/s), multi-stream.
+- **UDP packet rate** (Mpps) via `sendmmsg`/`recvmmsg` batching — so a real NIC,
+  not the tool, is the bottleneck. `iperf3` is single-threaded for UDP and tops out
+  well below line rate on small frames; RunPerf pins N threads to N cores.
+- **Loss** measured server-side from per-stream sequence gaps (no control channel).
+- **CPU pinning** (`--cpus`) and **NUMA-node pinning** (`--numa`).
+- **Anti-OOM guard**: refuses absurd buffer allocations (won't OOM the box).
+- Human and **JSON** output. Single static binary, only dependency `libc`.
 
 ## Install
 
-Download the release bundle (inside the host/VM that will run the test):
-
 ```bash
 ver=v0.1.0
-curl -fsSLO https://github.com/redlemonbe/RunPerf/releases/download/$ver/runperf-$ver-x86_64-linux-gnu.tar.gz
-tar -xzf runperf-$ver-x86_64-linux-gnu.tar.gz
+base=https://github.com/redlemonbe/RunPerf/releases/download/$ver
+
+# x86_64 static (musl — no dependencies)
+curl -fsSL $base/runperf-x86_64-unknown-linux-musl -o runperf && chmod +x runperf
+# x86_64 glibc (servers with glibc >= 2.17)
+curl -fsSL $base/runperf-x86_64-unknown-linux-gnu  -o runperf && chmod +x runperf
+# aarch64 static (Graviton, Raspberry Pi 4/5 — musl)
+curl -fsSL $base/runperf-aarch64-unknown-linux-musl -o runperf && chmod +x runperf
+# aarch64 glibc
+curl -fsSL $base/runperf-aarch64-unknown-linux-gnu  -o runperf && chmod +x runperf
+
 ./runperf --help
 ```
 
-Or build it: `cargo build --release` (only dependency: `libc`).
-
-## Usage
+## Quick start
 
 One side runs the **server**, the other the **client**.
 
-### TCP throughput
-
 ```bash
-# receiver
+# TCP throughput — receiver, then sender (4 pinned streams, 10 s)
 runperf server --bind 0.0.0.0:5201
-
-# sender (4 pinned streams, 10 s)
 runperf client --connect HOST:5201 --duration 10 --threads 4 --cpus 0-3
-```
 
-### UDP packet rate (the point of this tool)
-
-```bash
-# receiver — reports received pps and loss (from per-stream sequence gaps)
+# UDP packet rate — receiver (reports pps + loss), then blast 64 B from NUMA node 0
 runperf server --udp --bind 0.0.0.0:5201 --len 64
-
-# sender — blast 64-byte packets from 8 cores pinned to NUMA node 0
 runperf client --connect HOST:5201 --udp --len 64 --duration 10 --threads 8 --numa 0
+
+# Capped rate + JSON (CI/CD)
+runperf client --connect HOST:5201 --udp --len 1400 --target-pps 1000000 --json
 ```
 
-`--target-pps N` caps the send rate (default 0 = blast). `--json` prints a
-machine-readable summary for scripting.
+## Output
 
-## Metrics
+- **TCP**: throughput (Gb/s) per second and total.
+- **UDP**: packet rate (Mpps), throughput (Gb/s), and **loss %** (server side, from
+  sequence gaps).
 
-- **TCP**: throughput (Gb/s), per second and total.
-- **UDP**: packet rate (Mpps), throughput (Gb/s), and **loss %** — the server
-  derives loss from gaps in each stream's sequence numbers (no control channel).
-
-## Options
+## Flags
 
 | Flag | Meaning |
 |---|---|
+| `--bind ADDR:PORT` | server listen address (default `0.0.0.0:5201`) |
+| `--connect HOST:PORT` | client target |
 | `--udp` | UDP packet-rate test (default: TCP throughput) |
 | `--threads N` | parallel streams/sockets (client) |
-| `--cpus LIST` | pin worker threads to CPUs (`0-3,8`) |
+| `--cpus LIST` | pin worker threads to CPUs (e.g. `0-3,8`) |
 | `--numa N` | pin worker threads to NUMA node N's CPUs |
-| `--len B` | UDP payload size (bytes) |
-| `--target-pps N` | cap send rate (0 = blast) |
+| `--len B` | UDP payload size in bytes |
+| `--target-pps N` | cap send rate (0 = blast, default) |
 | `--duration S` | client run time |
 | `--json` | machine-readable client summary |
 
+## Build from source
+
+```bash
+cargo build --release        # only dependency: libc
+```
+
+Cross-compiles cleanly to `x86_64`/`aarch64` × `gnu`/`musl` (no C dependencies).
+
 ## Status
 
-**v0.1.0 — functional.** TCP throughput, UDP pps with `sendmmsg`/`recvmmsg`,
-CPU pinning, NUMA pinning, sequence-gap loss, JSON output — all working and
-self-tested on loopback. Real per-NIC numbers come from running it on real
-hardware. Loopback UDP pps is kernel-bound, not a tool limit.
+**v0.1.0 — functional**, self-tested on loopback (TCP, UDP, JSON, pinning, anti-OOM).
+Real per-NIC numbers come from running on real hardware; loopback UDP pps is
+kernel-bound, not a tool limit. Roadmap (v0.2): multi-threaded UDP server
+(`SO_REUSEPORT`), latency/RTT mode with P99, optional `io_uring` send path.
 
-Roadmap (v0.2): multi-threaded UDP server (`SO_REUSEPORT`), latency/RTT mode with
-P99, optional `io_uring` send path.
+## Contributing
 
-## License
+Issues and PRs welcome. New code paths should keep the anti-OOM guard intact.
+
+## Support the project
+
+[![Sponsor](https://img.shields.io/github/sponsors/redlemonbe?style=flat&logo=github&label=Sponsor)](https://github.com/sponsors/redlemonbe)
+
+---
 
 AGPL-3.0 — see [LICENSE](LICENSE). Contact: redlemonbe@codix.be

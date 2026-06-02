@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use crate::affinity::pin_to_cpu;
 
-const BATCH: usize = 64; // mmsg batch size
+pub const BATCH: usize = 64; // mmsg batch size
 const HDR: usize = 16; // stream_id + seq
 
 // ── Shared counters ────────────────────────────────────────────────────────────
