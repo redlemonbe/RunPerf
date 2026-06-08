@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0 — scaling datapath
+
+- Auto per-CPU pinned workers (one per online core); `--threads`/`--cpus`/`--numa` overrides.
+- Multiqueue-aware: one worker per NIC RX queue, capped at the CPU count.
+- TCP: `SO_REUSEPORT` servers; single-flow default reaching 10 GbE line rate (= `iperf3`).
+- UDP: `sendmmsg`/`recvmmsg` batching; packet-rate scales with cores/queues (~70x from 2->8 queues, VM-to-VM 10 GbE).
+- SIMD hot path: SSE2/AVX2 memcpy, runtime CPU dispatch.
+- AF_XDP datapath (`--xdp`, `xdp` feature): kernel-bypass UDP TX generator (libc-only) + XDP-redirect RX sink (via aya).
+- Design + measured results: docs/WHITEPAPER.md.
+
+
 ## v0.1.0
 
 Initial release.

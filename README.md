@@ -131,6 +131,8 @@ Cross-compiles to `x86_64`/`aarch64` × `gnu`/`musl`.
 servers, SSE2/AVX2 SIMD, AF_XDP TX generator + RX sink. Throughput scales with
 allocated cores/queues. Roadmap: receive-side scaling, latency/RTT (P99), `io_uring`.
 
+Design and measured results: **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)**.
+
 ## Support the project
 
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/redlemonbe?style=flat&logo=github&label=Sponsor%20on%20GitHub)](https://github.com/sponsors/redlemonbe)
