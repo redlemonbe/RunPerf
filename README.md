@@ -133,8 +133,15 @@ allocated cores/queues. Roadmap: receive-side scaling, latency/RTT (P99), `io_ur
 
 ## Support the project
 
-[![Sponsor](https://img.shields.io/github/sponsors/redlemonbe?style=flat&logo=github&label=Sponsor)](https://github.com/sponsors/redlemonbe)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/redlemonbe?style=flat&logo=github&label=Sponsor%20on%20GitHub)](https://github.com/sponsors/redlemonbe)
+
+**Bitcoin** — `3FP8hkkiu4kwCD1PDFgAv2oq1ZTyXwy3yy`  
+**Ethereum** — `0xB5eEAf89edA4204Aa9305B068b37A93439cBb680`
 
 ---
 
-AGPL-3.0 — see [LICENSE](LICENSE). Contact: redlemonbe@codix.be
+## License
+
+AGPL v3 — see [LICENSE](LICENSE).
+
+---
