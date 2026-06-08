@@ -1,0 +1,91 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            apt: musl-tools
+          - target: x86_64-unknown-linux-gnu
+            apt: ""
+          - target: aarch64-unknown-linux-gnu
+            apt: gcc-aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup target add ${{ matrix.target }}
+          if [ -n "${{ matrix.apt }}" ]; then sudo apt-get update -qq && sudo apt-get install -y ${{ matrix.apt }}; fi
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          fi
+      - name: Build (default features — libc-only, no xdp)
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Stage artifact
+        run: |
+          mkdir -p out
+          cp "target/${{ matrix.target }}/release/runperf" "out/runperf-${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runperf-${{ matrix.target }}
+          path: out/runperf-${{ matrix.target }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: Collect assets + checksums
+        run: |
+          mkdir -p release-assets
+          find dl -type f -name 'runperf-*' -exec cp {} release-assets/ \;
+          ( cd release-assets && sha256sum runperf-* > SHA256SUMS.txt )
+          ls -lh release-assets
+
+      - name: Sign assets with minisign (Run suite key)
+        env:
+          MINISIGN_SECRET: ${{ secrets.MINISIGN_SECRET }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET" ]; then
+            echo "::warning::MINISIGN_SECRET not set — skipping signatures"
+            exit 0
+          fi
+          curl -sSL https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz | tar -xz -C /tmp
+          MS=$(find /tmp -name minisign -type f -perm -u+x | head -1)
+          printf '%s\n' "$MINISIGN_SECRET" > /tmp/minisign.key
+          sign() {
+            if [ -n "$MINISIGN_PASSWORD" ]; then
+              printf '%s\n' "$MINISIGN_PASSWORD" | "$MS" -S -s /tmp/minisign.key -m "$1"
+            else
+              "$MS" -S -s /tmp/minisign.key -m "$1" </dev/null
+            fi
+          }
+          cd release-assets
+          for f in runperf-* SHA256SUMS.txt; do sign "$f"; done
+          rm -f /tmp/minisign.key
+          ls -lh
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: RunPerf ${{ github.ref_name }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: release-assets/*
