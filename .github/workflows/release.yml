@@ -21,6 +21,8 @@ jobs:
             apt: ""
           - target: aarch64-unknown-linux-gnu
             apt: gcc-aarch64-linux-gnu
+          - target: aarch64-unknown-linux-musl
+            apt: gcc-aarch64-linux-gnu musl-tools
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -29,6 +31,9 @@ jobs:
           if [ -n "${{ matrix.apt }}" ]; then sudo apt-get update -qq && sudo apt-get install -y ${{ matrix.apt }}; fi
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          fi
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           fi
       - name: Build (default features — libc-only, no xdp)
         run: cargo build --release --target ${{ matrix.target }}
