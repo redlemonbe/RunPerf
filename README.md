@@ -113,8 +113,19 @@ difference is the architecture, laid out with measurements in
 [docs/WHITEPAPER.md](docs/WHITEPAPER.md). On an emulated NIC it falls back to copy mode
 and the device emulation is the ceiling.
 
-AF_XDP shines on real NICs (ixgbe/i40e PF, line-rate). On emulated NICs it falls
-back to copy mode and the device emulation is the ceiling.
+## Where RunPerf fits among generators
+
+Kernel-bypass packet generation isn't new: **TRex** (Cisco), **MoonGen** and **pktgen-dpdk** are
+the established high-rate generators. Built on DPDK, they push well past 10 GbE and model rich
+stateful/scripted traffic — they are the reference when you need maximum rate or 100 GbE, and
+RunPerf doesn't aim at their ceiling.
+
+RunPerf fills a different need: **`iperf3`-style ergonomics with a kernel-bypass datapath**. One
+static binary, the familiar client/server CLI, and **AF_XDP** (in-kernel — no DPDK), so there are
+no hugepages to reserve, no NIC to unbind from the kernel, and no scripting runtime to learn. The
+rule of thumb: reach for TRex/MoonGen when you need the absolute ceiling, 100 GbE, or complex
+traffic models; reach for RunPerf when you want line-rate small-packet generation with the
+simplicity of `iperf3` and nothing to set up.
 
 ## Flags
 

@@ -41,6 +41,23 @@ RunPerf keeps the familiar `iperf3`-style client/server UX, scales out — one p
 CPU, one per NIC RX queue — and adds an AF_XDP datapath for the cases where the kernel is the
 ceiling, while deferring to `iperf3` on the throughput axis the two share.
 
+### Where RunPerf sits among packet generators
+
+Kernel-bypass packet generation is well-established. **TRex** (Cisco), **MoonGen** and
+**pktgen-dpdk** are the reference high-rate generators: built on **DPDK**, they reach far past 10
+GbE — 100 GbE and beyond — and model rich stateful or scripted traffic. They are the right tool
+when the goal is the absolute packet-rate ceiling or complex traffic generation, and RunPerf does
+not try to match that ceiling.
+
+RunPerf occupies a deliberately different point: the **bridge between `iperf3`'s simplicity and a
+kernel-bypass datapath**. It uses **AF_XDP**, which lives in the kernel — so, unlike a DPDK-based
+generator, there are no hugepages to reserve, no NIC to unbind from the kernel driver, and no
+scripting runtime; it ships as one static binary with the familiar `iperf3`-style client/server
+CLI. The trade is explicit: you give up DPDK's raw ceiling and traffic-modelling depth, and in
+return you get line-rate small-packet generation that runs anywhere `iperf3` would, with nothing
+to set up. Choose TRex/MoonGen for maximum rate and 100 GbE; choose RunPerf for `iperf3`
+ergonomics with a kernel-bypass fast path.
+
 ## 3. Architecture
 
 ```
