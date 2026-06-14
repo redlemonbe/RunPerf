@@ -26,11 +26,6 @@ pub fn online_cpus() -> Vec<usize> {
     }
 }
 
-/// Number of CPUs available to this process (>= 1).
-pub fn online_cpu_count() -> usize {
-    online_cpus().len().max(1)
-}
-
 /// Pin the calling thread to `cpu`. Best-effort; logs nothing on failure.
 pub fn pin_to_cpu(cpu: usize) -> bool {
     unsafe {

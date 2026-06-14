@@ -40,27 +40,34 @@ fn tx_one(state: &TxState, payload: &[u8]) -> bool {
         state.hdr.write_frame(buf, payload)
     };
     let desc = XdpDesc { addr, len: len as u32, options: 0 };
-    let (n, kick) = {
-        let tx = state.tx.lock().unwrap();
-        (tx.produce_tx(&[desc]), tx.needs_wakeup())
-    };
+    let n = { state.tx.lock().unwrap().produce_tx(&[desc]) };
     if n == 0 {
         state.pool.lock().unwrap().push(addr);
         return false;
     }
-    if kick {
-        unsafe {
-            libc::sendto(
-                state.fd,
-                std::ptr::null(),
-                0,
-                libc::MSG_DONTWAIT,
-                &state.sa as *const SockaddrXdp as *const libc::sockaddr,
-                std::mem::size_of::<SockaddrXdp>() as libc::socklen_t,
-            );
-        }
-    }
     true
+}
+
+/// Wake the kernel TX path. Called once per batch — NOT per packet. With
+/// `XDP_USE_NEED_WAKEUP` the kernel only sets the wakeup flag *after* it has
+/// started draining, so the flag is clear before the very first transmit and a
+/// purely conditional kick deadlocks (frames sit in the ring, nothing is sent,
+/// the completion ring never fills, the umem pool drains and TX stalls — the
+/// 16384-frames-then-stop symptom). An unconditional `sendto` per batch is the
+/// canonical AF_XDP TX trigger; at ~64 frames/kick it is ≤ a few hundred k
+/// syscalls/s even at 10 GbE line rate (14.9 Mpps), i.e. negligible.
+#[inline]
+fn kick(state: &TxState) {
+    unsafe {
+        libc::sendto(
+            state.fd,
+            std::ptr::null(),
+            0,
+            libc::MSG_DONTWAIT,
+            &state.sa as *const SockaddrXdp as *const libc::sockaddr,
+            std::mem::size_of::<SockaddrXdp>() as libc::socklen_t,
+        );
+    }
 }
 
 /// Blast crafted UDP frames out `iface` to `dst` via AF_XDP TX. One pinned
@@ -86,8 +93,27 @@ pub fn xdp_udp_blast(
     let queues = get_rx_queue_count(iface).max(1);
     let workers = (cpus.len() as u32).min(queues).max(1);
     let payload_len = payload_len.max(16);
+
+    // ZERO-COPY arming. On i40e/ixgbe (and most drivers) the AF_XDP zero-copy TX
+    // queue is only set up when an XDP program is bound to the netdev — without
+    // one the ZC bind "succeeds" but no frame ever leaves (tx stalls after one
+    // umem). The `xdp` feature embeds + attaches a pass/redirect program, which
+    // arms ZC; we then bind ZC and reach line rate. The default libc-only build
+    // has no program, so it uses copy mode (correct, just CPU-bound, ~socket
+    // speed). Keep the handle alive for the whole run; it detaches on drop.
+    #[cfg(feature = "xdp")]
+    let _xdp_handle = match super::loader::XdpHandle::load(iface) {
+        Ok(h) => { eprintln!("runperf: XDP program attached on {iface} — zero-copy TX armed"); Some(h) }
+        Err(e) => { eprintln!("runperf: could not attach XDP program ({e}) — falling back to copy mode"); None }
+    };
+    // Only attempt a zero-copy bind when we have a program attached to arm it.
+    let try_zc = cfg!(feature = "xdp") && {
+        #[cfg(feature = "xdp")] { _xdp_handle.is_some() }
+        #[cfg(not(feature = "xdp"))] { false }
+    };
     eprintln!(
-        "runperf AF_XDP generator: {iface} q={workers} -> {dst} (payload {payload_len}B, kernel-bypass)"
+        "runperf AF_XDP generator: {iface} q={workers} -> {dst} (payload {payload_len}B, {})",
+        if try_zc { "zero-copy" } else { "copy mode" }
     );
 
     // One XSK per queue. extract_tx() pulls the TX+completion rings + frame pool;
@@ -95,8 +121,12 @@ pub fn xdp_udp_blast(
     // runs to process exit).
     let mut states = Vec::new();
     for q in 0..workers {
-        let mut sock = unsafe { create_xsk_socket(ifidx, q, true) }
-            .or_else(|_| unsafe { create_xsk_socket(ifidx, q, false) })?;
+        let mut sock = if try_zc {
+            unsafe { create_xsk_socket(ifidx, q, true) }
+                .or_else(|_| unsafe { create_xsk_socket(ifidx, q, false) })?
+        } else {
+            unsafe { create_xsk_socket(ifidx, q, false) }?
+        };
         let area = sock.umem.ptr_at(0);
         let fd = sock.fd;
         let sa = SockaddrXdp {
@@ -177,6 +207,8 @@ fn tx_loop(
             }
         }
         if sent > 0 {
+            // One wakeup per batch drives the kernel TX path (see `kick`).
+            kick(state);
             pkts.fetch_add(sent, Ordering::Relaxed);
             bytes.fetch_add(sent * frame_total, Ordering::Relaxed);
             sent_sec += sent;

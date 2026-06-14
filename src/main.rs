@@ -21,16 +21,20 @@ fn usage() -> ! {
          \n\
          SERVER:\n\
          \x20 runperf server [--bind 0.0.0.0:5201] [--udp] [--len 1400] [--cpus 0,1|--numa 0]\n\
+         \x20 runperf server --xdp --iface <nic> [--udp] [--len 1400]   (AF_XDP RX sink, feature xdp)\n\
          \n\
          CLIENT:\n\
          \x20 runperf client --connect HOST:PORT [--udp] [--duration 10] [--threads 1] \\\n\
          \x20                [--len 1400] [--target-pps 0] [--cpus 0,1|--numa 0] [--json]\n\
+         \x20 runperf client --connect IPv4:PORT --xdp --iface <nic> --udp   (AF_XDP kernel-bypass generator)\n\
          \n\
          --udp           UDP packet-rate test (default: TCP throughput)\n\
          --target-pps N  cap send rate (0 = blast, default)\n\
          --cpus LIST     pin worker threads to these CPUs (e.g. 0-3,8)\n\
          --numa N        pin worker threads to NUMA node N's CPUs\n\
-         --json          machine-readable summary (client)",
+         --json          machine-readable summary (client)\n\
+         --xdp           AF_XDP kernel-bypass datapath (needs --iface; zero-copy with feature xdp)\n\
+         --iface NIC     NIC for the --xdp datapath (e.g. eth0)",
         env!("CARGO_PKG_VERSION")
     );
     std::process::exit(2);

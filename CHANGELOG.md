@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.3.0 — zero-copy generator validated
+
+The AF_XDP zero-copy TX generator now actually works and is validated at the NIC.
+
+- **Fixed the AF_XDP TX generator**, built since v0.2 but never transmitting:
+  - it kicked the TX ring only on `NEED_WAKEUP`, but that flag is clear before the first
+    transmit → frames sat in the ring, the completion ring never refilled, TX stalled after one
+    umem (16384 frames, 0 on the wire). Now kicks once per batch unconditionally.
+  - on `i40e`/`ixgbe` the zero-copy TX queue is only armed when an XDP program is bound to the
+    netdev. The `xdp` feature now attaches the embedded program to arm zero-copy, binds ZC, and
+    falls back to copy mode otherwise. Detaches on exit (RAII).
+- **Validated at the NIC counter on an Intel X710 (i40e) 10 GbE link**, 64 B UDP:
+  zero-copy **8.3–8.8 Mpps (≈ line rate)**, **6.22 Mpps from a single core**, vs the socket
+  path 3.76 Mpps and `iperf3` 2.67 Mpps — ~3× at the wire ceiling, ~13× per core. See
+  `docs/WHITEPAPER.md` / `docs/BENCHMARKS.md`.
+- **Server-side loss now reported live** (per-stream sequence-gap %) — was computed, never shown.
+- `--help` lists `--xdp` / `--iface`; removed dead code. Zero warnings, `clippy -D` clean on both
+  the default (libc-only) and `--features xdp` builds. Added a CI workflow (build/clippy/test).
+
 ## v0.2.0 — scaling datapath
 
 - Auto per-CPU pinned workers (one per online core); `--threads`/`--cpus`/`--numa` overrides.

@@ -85,18 +85,26 @@ runperf client --connect HOST:5201 --threads 8 --cpus 0-7
 ## AF_XDP datapath (kernel-bypass)
 
 Build with the `xdp` feature (needs `clang` + `libbpf-dev` for the eBPF program;
-pulls `aya`). The TX generator needs no BPF program (XDP is RX-side) and is
-libc-only; the RX sink loads an XDP redirect program via aya.
+pulls `aya`). The feature embeds a small XDP program; the generator **attaches it
+to arm the driver's zero-copy TX queue** — `i40e`/`ixgbe` (and most drivers) only
+set up the AF_XDP zero-copy datapath when a program is bound to the netdev. Without
+the feature, or if the attach fails, the generator runs in **copy mode** (libc-only,
+CPU-bound, ≈ socket speed); the RX sink uses the same program to redirect UDP into
+the XSK. The program detaches automatically on exit (RAII).
 
 ```bash
 cargo build --release --features xdp
 
-# generator (TX): crafts Eth/IPv4/UDP frames, blasts via the AF_XDP TX ring
-runperf client --xdp --iface eth1 --connect 10.0.0.2:5201 --len 64
+# generator (TX): zero-copy AF_XDP, 10 GbE line rate on a real NIC
+runperf client --xdp --iface eth1 --connect 10.0.0.2:5201 --udp --len 64 --cpus 0-7
 
 # sink (RX): XDP redirects all UDP into the XSK, counted kernel-bypass
-runperf server --xdp --iface eth1
+runperf server --xdp --iface eth1 --udp
 ```
+
+On a real NIC (`ixgbe`/`i40e` PF) the generator reaches line rate in zero-copy
+(≈ 8.8 Mpps at 64 B, ~3× `iperf3`/socket — see [docs/WHITEPAPER.md](docs/WHITEPAPER.md)).
+On an emulated NIC it falls back to copy mode and the device emulation is the ceiling.
 
 AF_XDP shines on real NICs (ixgbe/i40e PF, line-rate). On emulated NICs it falls
 back to copy mode and the device emulation is the ceiling.
@@ -127,9 +135,11 @@ Cross-compiles to `x86_64`/`aarch64` × `gnu`/`musl`.
 
 ## Status
 
-**v0.2 — scaling datapath.** Auto per-CPU pinned workers, multiqueue, SO_REUSEPORT
-servers, SSE2/AVX2 SIMD, AF_XDP TX generator + RX sink. Throughput scales with
-allocated cores/queues. Roadmap: receive-side scaling, latency/RTT (P99), `io_uring`.
+**v0.3 — zero-copy generator validated.** Auto per-CPU pinned workers, multiqueue,
+`SO_REUSEPORT` servers, SSE2/AVX2 SIMD. The **AF_XDP zero-copy TX generator reaches
+10 GbE line rate** (≈ 8.8 Mpps at 64 B, ~3× `iperf3`/socket), measured at the NIC
+counter on an Intel X710; server-side sequence-gap loss is reported live. Roadmap:
+latency/RTT (P99), `io_uring`, >10 GbE validation.
 
 Design and measured results: **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)**.
 

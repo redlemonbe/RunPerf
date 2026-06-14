@@ -87,16 +87,26 @@ bound; on a 10 GbE TCP flow the kernel path already saturates and the copy is no
 
 Built with `--features xdp`:
 
-- **TX generator** (`src/xdp/gen.rs`) — TX-only AF_XDP needs **no** BPF program (XDP is an
-  RX-side concept), so the generator stays libc-only: it crafts Ethernet/IPv4/UDP frames into
-  the umem (payload copied with the SIMD routine) and pushes them through the AF_XDP TX ring via
-  `sendto`, one pinned worker per queue.
+- **TX generator** (`src/xdp/gen.rs`) — crafts Ethernet/IPv4/UDP frames into the umem (payload
+  copied with the SIMD routine) and pushes them through the AF_XDP TX ring, one pinned worker
+  per queue. Two details decide whether a frame ever leaves the wire:
+  - **Kick once per batch, unconditionally.** With `XDP_USE_NEED_WAKEUP` the kernel only sets
+    the wakeup flag *after* it has begun draining, so the flag is clear before the first
+    transmit. Kicking *only* when the flag is set deadlocks on startup — descriptors pile up,
+    the completion ring never refills, the umem drains, and TX stalls after one umem (the
+    "16384 frames then silence, NIC `tx_packets`=0" symptom). One `sendto` per ~64-frame batch
+    is the canonical trigger and is negligible (≤ a few hundred k syscalls/s at line rate).
+  - **Zero-copy needs an XDP program bound to the netdev.** On `i40e`/`ixgbe` the ZC TX queue
+    is only armed when *some* XDP program is attached — even for TX-only. The `xdp` feature
+    attaches the embedded program to arm ZC, then binds zero-copy; without it (or on failure)
+    the generator falls back to **copy mode**, which adds a per-packet copy and is no faster
+    than the socket path. The program detaches on exit (RAII).
 - **RX sink** (`ebpf/runperf_xdp.c`, loaded via `aya`) — an XDP program redirects matching UDP
-  traffic straight into the XSK (`XDP_REDIRECT`), where it is counted without traversing the
-  kernel network stack; everything else is `XDP_PASS`ed.
+  traffic straight into the XSK (`XDP_REDIRECT`), counted without traversing the kernel stack;
+  everything else is `XDP_PASS`ed.
 
-AF_XDP is zero-copy where the driver supports it (`ixgbe`/`i40e` PF, line rate); on an emulated
-NIC it falls back to copy mode and the device emulation becomes the ceiling.
+On a real NIC (`ixgbe`/`i40e` PF) zero-copy reaches line rate (§7); on an emulated NIC the
+device emulation becomes the ceiling.
 
 ## 7. Measured results
 
@@ -114,18 +124,34 @@ Measured VM-to-VM, two hypervisor hosts, 10 GbE direct link, RunPerf v0.2:
   framing). Two independent tools reaching the same figure *is* the evidence that the ceiling is
   the physical link, not the tool.
 
-Honest scope: these are the socket-datapath numbers on virtualised NICs. The `--xdp` path is
-expected to push the UDP rate further on a real `ixgbe`/`i40e` PF by bypassing the stack, but
-that has not yet been benchmarked on real hardware here — it must be measured, not extrapolated.
-The v0.1 release was self-tested on loopback only (where UDP pps is kernel-bound, not a tool
-limit); real per-NIC numbers require real hardware.
+### Zero-copy on real hardware (v0.3)
+
+The `--xdp` path has now been benchmarked on real hardware — **Intel X710 (i40e), 10 GbE
+direct link, 64 B UDP, read at the receiver NIC counter** (not the tool's self-report):
+
+| Generator path | UDP 64 B (Mpps) | per-core | vs `iperf3` |
+|---|---|---|---|
+| `iperf3 -u -b 0`, 8 streams | 2.67 | — | 1.0× |
+| RunPerf socket (`sendmmsg`, 8 cores) | 3.76 | 0.47 | 1.4× |
+| RunPerf AF_XDP copy mode | 2.30 | — | 0.9× |
+| RunPerf AF_XDP zero-copy, 1 queue / 1 core | 6.22 | **6.22** | 2.3× |
+| RunPerf AF_XDP zero-copy, 8 queues | **8.3 – 8.8** (≈ link rate) | — | **3.1×** |
+
+The socket path is CPU-bound at ~40 % of line rate (scales with cores); copy mode adds a
+per-packet copy and is no faster. **Zero-copy saturates the link and delivers ≈ 13× the
+per-core packet rate** (6.22 Mpps from one core vs 0.47 Mpps/core on the socket path). On
+faster NICs (25/40/100 GbE) the gap is expected to widen — the socket path stays CPU-bound
+while zero-copy tracks the wire — but that is a projection until measured, not a result.
 
 ## 8. Test rig
 
-VM-to-VM across two hypervisor hosts over a 10 GbE direct link; x86_64; the high-rate row used a
-paravirtualised NIC with `vhost`, 8 RX queues bound to 8 vCPUs. Generators pinned one worker per
-vCPU. Loss measured server-side from per-stream sequence gaps. TCP compared head-to-head with
-`iperf3` on the identical path.
+Two rigs. **Socket/scaling rows:** VM-to-VM across two hypervisor hosts over a 10 GbE direct
+link; x86_64; the high-rate row used a paravirtualised NIC with `vhost`, 8 RX queues bound to 8
+vCPUs. **Zero-copy rows (v0.3):** bare-metal, Intel **X710 (i40e)** PF, 10 GbE direct host-to-host
+link, MTU 1500, generator on an AMD Threadripper PRO 5995WX. Generators pinned one worker per
+core/queue. Loss measured server-side from per-stream sequence gaps; throughput read from the
+NIC hardware counter (`ethtool -S`). TCP compared head-to-head with `iperf3` on the identical
+path. Full reproduction recipe: [BENCHMARKS.md](BENCHMARKS.md).
 
 ## 9. Limits and roadmap
 

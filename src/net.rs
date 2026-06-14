@@ -31,7 +31,6 @@ pub struct Counters {
 pub struct Summary {
     pub bytes: u64,
     pub packets: u64,
-    pub drops: u64,
     pub secs: f64,
 }
 impl Summary {
@@ -41,14 +40,6 @@ impl Summary {
     pub fn mpps(&self) -> f64 {
         (self.packets as f64) / self.secs / 1e6
     }
-    pub fn loss_pct(&self) -> f64 {
-        let total = self.packets + self.drops;
-        if total == 0 {
-            0.0
-        } else {
-            self.drops as f64 * 100.0 / total as f64
-        }
-    }
 }
 
 /// Background reporter: prints instantaneous rate each second until `run` clears.
@@ -56,6 +47,7 @@ pub fn spawn_reporter(c: Arc<Counters>, run: Arc<AtomicBool>, udp: bool) -> thre
     thread::spawn(move || {
         let mut last_b = 0u64;
         let mut last_p = 0u64;
+        let mut last_d = 0u64;
         let mut t = 0u64;
         while run.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_secs(1));
@@ -65,7 +57,12 @@ pub fn spawn_reporter(c: Arc<Counters>, run: Arc<AtomicBool>, udp: bool) -> thre
             t += 1;
             if udp {
                 let pps = (p - last_p) as f64 / 1e6;
-                eprintln!("[{t:>3}s] {gbps:7.3} Gb/s  {pps:7.3} Mpps");
+                // Loss = per-stream sequence gaps seen this interval (receiver side).
+                let d = c.drops.load(Ordering::Relaxed);
+                let (dp, rx) = (d - last_d, p - last_p);
+                let loss = if rx + (dp) == 0 { 0.0 } else { dp as f64 * 100.0 / (rx + dp) as f64 };
+                eprintln!("[{t:>3}s] {gbps:7.3} Gb/s  {pps:7.3} Mpps  {loss:5.2}% loss");
+                last_d = d;
             } else {
                 eprintln!("[{t:>3}s] {gbps:7.3} Gb/s");
             }
@@ -282,7 +279,6 @@ pub fn tcp_client(
     Ok(Summary {
         bytes: counters.bytes.load(Ordering::Relaxed),
         packets: 0,
-        drops: 0,
         secs: start.elapsed().as_secs_f64(),
     })
 }
@@ -385,7 +381,6 @@ pub fn udp_client(
     Ok(Summary {
         bytes: counters.bytes.load(Ordering::Relaxed),
         packets: counters.packets.load(Ordering::Relaxed),
-        drops: 0,
         secs: start.elapsed().as_secs_f64(),
     })
 }
