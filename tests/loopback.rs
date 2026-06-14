@@ -3,9 +3,10 @@
 //! dependency — the --json output is a single hand-rolled line on stdout (the SIMD banner goes
 //! to stderr), so a tiny field extractor is enough.
 
+use std::net::TcpStream;
 use std::process::{Command, Stdio};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_runperf")
@@ -23,6 +24,19 @@ fn field(json: &str, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// Wait until the TCP server is actually accepting — a connect-retry loop, robust to a slow
+/// or loaded runner (no fixed sleep guesswork). Returns when listening or the deadline passes
+/// (the test then fails on its assertion with a clear message rather than hanging).
+fn wait_tcp_listening(addr: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if TcpStream::connect(addr).is_ok() {
+            return;
+        }
+        sleep(Duration::from_millis(25));
+    }
+}
+
 fn run_loopback(udp: bool, port: u16) -> String {
     let addr = format!("127.0.0.1:{port}");
     let mut server_args = vec!["server", "--bind", &addr, "--cpus", "0"];
@@ -36,8 +50,14 @@ fn run_loopback(udp: bool, port: u16) -> String {
         .spawn()
         .expect("spawn server");
 
-    // Let the server bind its REUSEPORT socket(s) before the client connects/sends.
-    sleep(Duration::from_millis(500));
+    if udp {
+        // The UDP client's assertion is send-side (packets/bytes it generated), which does not
+        // depend on the server being ready; a brief wait is enough to make it a real round trip.
+        sleep(Duration::from_millis(300));
+    } else {
+        // TCP needs the listener up before the client connects — probe instead of guessing.
+        wait_tcp_listening(&addr, Duration::from_secs(10));
+    }
 
     let mut client_args = vec![
         "client", "--connect", &addr, "--duration", "1", "--cpus", "0", "--json",
