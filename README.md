@@ -103,8 +103,10 @@ runperf server --xdp --iface eth1 --udp
 ```
 
 On a real NIC (`ixgbe`/`i40e` PF) the generator reaches line rate in zero-copy
-(≈ 8.8 Mpps at 64 B, ~3× `iperf3`/socket — see [docs/WHITEPAPER.md](docs/WHITEPAPER.md)).
-On an emulated NIC it falls back to copy mode and the device emulation is the ceiling.
+(≈ 8.8 Mpps at 64 B), where a kernel-socket datapath is CPU-bound below the wire — the
+difference is the architecture, laid out with measurements in
+[docs/WHITEPAPER.md](docs/WHITEPAPER.md). On an emulated NIC it falls back to copy mode
+and the device emulation is the ceiling.
 
 AF_XDP shines on real NICs (ixgbe/i40e PF, line-rate). On emulated NICs it falls
 back to copy mode and the device emulation is the ceiling.
@@ -136,10 +138,11 @@ Cross-compiles to `x86_64`/`aarch64` × `gnu`/`musl`.
 ## Status
 
 **v0.3 — zero-copy generator validated.** Auto per-CPU pinned workers, multiqueue,
-`SO_REUSEPORT` servers, SSE2/AVX2 SIMD. The **AF_XDP zero-copy TX generator reaches
-10 GbE line rate** (≈ 8.8 Mpps at 64 B, ~3× `iperf3`/socket), measured at the NIC
-counter on an Intel X710; server-side sequence-gap loss is reported live. Roadmap:
-latency/RTT (P99), `io_uring`, >10 GbE validation.
+`SO_REUSEPORT` servers, SSE2/AVX2 SIMD. On TCP, one flow matches `iperf3` exactly
+(9.88 Gb/s — it's the link). For small-frame packet rate, the **AF_XDP zero-copy TX
+generator reaches 10 GbE line rate** (≈ 8.8 Mpps at 64 B), measured at the NIC counter
+on an Intel X710, where a kernel-socket datapath is CPU-bound; server-side sequence-gap
+loss is reported live. Roadmap: latency/RTT (P99), `io_uring`, >10 GbE validation.
 
 Design and measured results: **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)**.
 

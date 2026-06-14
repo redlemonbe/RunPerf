@@ -22,19 +22,24 @@ The headline result is not a single number but a **slope**: the same UDP code go
 when given 8 cores/queues instead of 2 (see §8). For TCP, a single flow already reaches the
 10 GbE ceiling — identical to `iperf3` — so RunPerf defaults to one flow there.
 
-## 2. The problem
+## 2. The problem space
 
-`iperf3` is the de-facto throughput tool, but two things limit it for modern, high-packet-rate
-measurement:
+`iperf3` is the de-facto throughput tool, the standard it set is the right one, and it is the
+reference RunPerf validates itself against — on bulk TCP the two agree to the megabit (§7).
+RunPerf is built for an **adjacent** axis that throughput-focused tools were simply not designed
+to target: **small-packet rate (Mpps)** and **kernel-bypass generation** — the metrics that
+matter for NFV, overlay/encapsulation, DNS and DDoS-resilience work.
 
-- **UDP packet-rate is single-threaded.** Small-frame rate (Mpps) is bound by per-core packet
-  processing; one thread cannot express a multi-core/multi-queue NIC. The bottleneck is the
-  *tool*, not the link.
-- **No kernel-bypass path.** On a real NIC the stack itself caps small-packet rate; there is no
-  AF_XDP option to take the kernel out of the hot loop.
+- **Packet rate is a per-core problem.** Small-frame Mpps is bound by per-core packet processing,
+  so it scales with cores and NIC queues rather than with a single fast thread; expressing a
+  multi-core/multi-queue NIC needs a tool that fans out across them.
+- **Saturating a real NIC at small frames needs kernel-bypass.** Above a few Mpps the kernel
+  network stack itself becomes the limit; reaching line rate calls for an AF_XDP path that takes
+  the stack out of the hot loop.
 
-RunPerf keeps the familiar client/server UX but **scales out** — one pinned worker per CPU, one
-per NIC RX queue — and offers an AF_XDP path for the cases where the kernel is the ceiling.
+RunPerf keeps the familiar `iperf3`-style client/server UX, scales out — one pinned worker per
+CPU, one per NIC RX queue — and adds an AF_XDP datapath for the cases where the kernel is the
+ceiling, while deferring to `iperf3` on the throughput axis the two share.
 
 ## 3. Architecture
 
@@ -137,11 +142,39 @@ direct link, 64 B UDP, read at the receiver NIC counter** (not the tool's self-r
 | RunPerf AF_XDP zero-copy, 1 queue / 1 core | 6.22 | **6.22** | 2.3× |
 | RunPerf AF_XDP zero-copy, 8 queues | **8.3 – 8.8** (≈ link rate) | — | **3.1×** |
 
-The socket path is CPU-bound at ~40 % of line rate (scales with cores); copy mode adds a
-per-packet copy and is no faster. **Zero-copy saturates the link and delivers ≈ 13× the
-per-core packet rate** (6.22 Mpps from one core vs 0.47 Mpps/core on the socket path). On
-faster NICs (25/40/100 GbE) the gap is expected to widen — the socket path stays CPU-bound
-while zero-copy tracks the wire — but that is a projection until measured, not a result.
+A kernel-socket datapath — RunPerf's own, like any socket-based tool — is CPU-bound below line
+rate at small frames (here ~40 %, scaling with cores); copy mode adds a per-packet copy and is
+no faster. **Zero-copy saturates the link and delivers ≈ 13× the per-core packet rate** (6.22
+Mpps from one core vs 0.47 Mpps/core on the socket path). On faster NICs (25/40/100 GbE) the gap
+is expected to widen — a socket path stays CPU-bound while zero-copy tracks the wire — but that
+is a projection until measured, not a result.
+
+### Where the difference comes from — architecture, measured
+
+The TCP and packet-rate figures follow directly from *how* each tool is built, on the same rig
+and the same method — not from any judgement of one tool over another:
+
+| Axis | `iperf3` | RunPerf |
+|---|---|---|
+| Design goal | bulk throughput | throughput **and** packet rate |
+| TCP, 1 flow | 9.88 Gb/s | 9.88 Gb/s — *identical: it is the link* |
+| UDP worker model | one stream | one pinned worker per core / NIC queue |
+| UDP datapath | kernel sockets | kernel sockets **+ optional AF_XDP zero-copy** |
+| UDP 64 B (measured) | 2.67 Mpps | 3.76 (socket) → 8.8 (zero-copy) |
+
+Read top to bottom, each number is explained by the row above it:
+
+- On **TCP** both land on 9.88 Gb/s because there the *link* is the limit, not the tool — exactly
+  what a trusted reference is for: confirming the ceiling is physical.
+- On **UDP packet rate** the figures differ because the *datapaths* differ. `iperf3`'s UDP path
+  is a single kernel-socket stream — the right and sufficient design for the throughput it is
+  built to measure. RunPerf runs the same socket model fanned out across cores (2.67 → 3.76
+  Mpps), then its AF_XDP path takes the kernel out of the small-packet hot loop (→ 8.8 Mpps, line
+  rate).
+
+So this is not one tool against another — it is the **socket model versus kernel-bypass**,
+measured on the same wire. For bulk throughput they agree; for small-packet generation the
+architecture is the whole story, and the table above is that story in numbers.
 
 ## 8. Test rig
 
