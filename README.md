@@ -3,11 +3,15 @@
 [![Release](https://img.shields.io/github/v/release/redlemonbe/RunPerf)](https://github.com/redlemonbe/RunPerf/releases/latest)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/redlemonbe?style=flat&logo=github&label=Sponsor)](https://github.com/sponsors/redlemonbe)
 
+> **RunPerf isn't a faster `iperf3` — on bulk TCP it matches it exactly (it's the link, not the
+> tool), and it adds the axis throughput tools weren't designed for: small-packet generation at
+> NIC line rate, via AF_XDP kernel-bypass.**
+
 > Read [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md) before use. At full throttle RunPerf
 > generates **millions of packets per second** — only point it at networks you own
 > or are authorized to test.
 
-A network throughput and packet-rate benchmark — like `iperf3`, but built to
+A network throughput and packet-rate benchmark in the spirit of `iperf3`, built to
 **scale with the cores you give it**: auto per-CPU pinned workers, multiqueue,
 SSE2/AVX2 hot path, and an optional **AF_XDP kernel-bypass** datapath.
 
