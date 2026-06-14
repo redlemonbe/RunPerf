@@ -41,18 +41,26 @@ fn compile_xdp_program() {
 }
 
 fn arch_include_path() -> Option<String> {
-    // Detect build target arch and return the multiarch include directory.
-    let target = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    let multiarch = match target.as_str() {
+    // The BPF object is architecture-neutral: it is the same regardless of the Rust target,
+    // so compile it with the BUILD HOST's kernel headers, NOT the (cross-)target's. Using the
+    // target arch breaks cross-compilation — building the aarch64 target on an x86_64 CI runner
+    // looks for /usr/include/aarch64-linux-gnu (absent) and clang then can't find asm/types.h.
+    // `std::env::consts::ARCH` is the host arch (build scripts run on the host); fall back to
+    // any present multiarch dir.
+    let host = match std::env::consts::ARCH {
         "x86_64"  => "x86_64-linux-gnu",
         "aarch64" => "aarch64-linux-gnu",
         "arm"     => "arm-linux-gnueabihf",
-        _         => return None,
+        _         => "",
     };
-    let path = format!("/usr/include/{multiarch}");
-    if std::path::Path::new(&path).exists() {
-        Some(path)
-    } else {
-        None
+    for multiarch in [host, "x86_64-linux-gnu", "aarch64-linux-gnu"] {
+        if multiarch.is_empty() {
+            continue;
+        }
+        let path = format!("/usr/include/{multiarch}");
+        if std::path::Path::new(&path).exists() {
+            return Some(path);
+        }
     }
+    None
 }
