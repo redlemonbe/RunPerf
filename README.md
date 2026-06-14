@@ -1,4 +1,5 @@
 # RunPerf
+[![CI](https://github.com/redlemonbe/RunPerf/actions/workflows/ci.yml/badge.svg)](https://github.com/redlemonbe/RunPerf/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/redlemonbe/RunPerf)](https://github.com/redlemonbe/RunPerf/releases/latest)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/redlemonbe?style=flat&logo=github&label=Sponsor)](https://github.com/sponsors/redlemonbe)
@@ -129,6 +130,11 @@ back to copy mode and the device emulation is the ceiling.
 | `--xdp` | AF_XDP datapath (needs `--iface`; build `--features xdp` for the sink) |
 | `--iface NIC` | NIC for the AF_XDP datapath |
 | `--json` | machine-readable summary |
+| `--version` / `-V` | print version |
+
+> **Addressing:** RunPerf is **IPv4-only** today — the `SO_REUSEPORT` server bind, the UDP
+> client, and the AF_XDP generator all use IPv4 (`--connect` takes an `IPv4:port`). IPv6 is on
+> the roadmap.
 
 ## Build from source
 

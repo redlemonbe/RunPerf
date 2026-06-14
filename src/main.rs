@@ -82,6 +82,13 @@ fn main() {
     if args.is_empty() {
         usage();
     }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("runperf {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        usage();
+    }
     simd::log_simd_info();
     let mode = args[0].clone();
     let udp = has(&args, "--udp");
