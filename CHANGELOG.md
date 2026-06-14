@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.1 — hardening, tests, positioning
+
+No datapath change — the zero-copy generator is unchanged from v0.3.0. This release adds the
+polish that makes the project stand on its own:
+
+- **`--version` / `-V`** (and explicit `-h`/`--help`).
+- **End-to-end integration tests** (`tests/loopback.rs`): spawn the real `runperf` server +
+  client on loopback (TCP and UDP) and assert the `--json` summary shows real traffic. Uses a
+  TCP connect-retry readiness probe (no fragile fixed sleep) and reaps the server before
+  asserting. Runs in CI.
+- **Honest positioning among generators** — README + WHITEPAPER credit TRex/MoonGen/pktgen-dpdk
+  as the DPDK-class high-rate references and frame RunPerf as the bridge between `iperf3`
+  ergonomics and a kernel-bypass datapath (AF_XDP, no DPDK). The iperf3 comparison is stated as
+  architecture, measured, with no value judgement.
+- **Docs/CI**: documented IPv4-only (REUSEPORT bind / UDP client / AF_XDP generator; IPv6 on the
+  roadmap), CI status badge, `CONTRIBUTING.md` (incl. the measure-at-the-NIC benchmark policy),
+  and a pinned `dtolnay/rust-toolchain` in CI (no pipe-to-sh).
+
 ## v0.3.0 — zero-copy generator validated
 
 The AF_XDP zero-copy TX generator now actually works and is validated at the NIC.
